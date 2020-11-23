@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using NewLife.Data;
 using NewLife.Reflection;
 using NewLife.Serialization;
@@ -30,6 +31,13 @@ namespace NewLife.Caching
         /// <param name="write">是否写入操作</param>
         /// <returns></returns>
         public virtual T Execute<T>(Func<RedisClient, T> func, Boolean write = false) => Redis.Execute(Key, func, write);
+
+        /// <summary>异步执行命令</summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="func"></param>
+        /// <param name="write">是否写入操作</param>
+        /// <returns></returns>
+        public virtual async Task<T> ExecuteAsync<T>(Func<RedisClient, Task<T>> func, Boolean write = false) => await Redis.ExecuteAsync(Key, func, write);
         #endregion
 
         #region 辅助
@@ -49,7 +57,8 @@ namespace NewLife.Caching
             {
                 case TypeCode.Object: return value.ToJson().GetBytes();
                 case TypeCode.String: return (value as String).GetBytes();
-                default: return "{0}".F(value).GetBytes();
+                case TypeCode.DateTime: return ((DateTime)value).ToFullString().GetBytes();
+                default: return value.ToString().GetBytes();
             }
         }
 

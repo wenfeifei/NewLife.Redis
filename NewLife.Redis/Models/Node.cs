@@ -6,7 +6,7 @@ using NewLife.Collections;
 using NewLife.Log;
 using NewLife.Net;
 
-namespace NewLife.Caching
+namespace NewLife.Caching.Models
 {
     /// <summary>服务器节点。内部连接池</summary>
     public class Node
@@ -179,13 +179,10 @@ namespace NewLife.Caching
                 var uri = new NetUri("tcp://" + addr);
                 if (uri.Port == 0) uri.Port = 6379;
 
-                var rc = new RedisClient
+                var rc = new RedisClient(rds, uri)
                 {
-                    Server = uri,
-                    Password = rds.Password,
+                    Log = rds.Log
                 };
-
-                rc.Log = rds.Log;
                 if (rds.Db > 0) rc.Select(rds.Db);
 
                 return rc;

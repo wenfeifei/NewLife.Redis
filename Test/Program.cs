@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using NewLife;
 using NewLife.Caching;
 using NewLife.Log;
 using NewLife.Security;
@@ -16,25 +17,26 @@ namespace Test
         {
             XTrace.UseConsole();
 
-            // 激活FullRedis，否则Redis.Create会得到默认的Redis对象
+            // 激活FullRedis，否则new FullRedis会得到默认的Redis对象
             FullRedis.Register();
 
             try
             {
                 //TestHyperLogLog();
-                Test1();
+                Test3();
             }
             catch (Exception ex)
             {
                 XTrace.WriteException(ex);
             }
 
+            Console.WriteLine("OK!");
             Console.ReadKey();
         }
 
         static void Test1()
         {
-            var ic = Redis.Create("127.0.0.1:6379", 3);
+            var ic = new FullRedis("127.0.0.1:6379", null, 3);
             //var ic = new FullRedis();
             //ic.Server = "127.0.0.1:6379";
             //ic.Db = 3;
@@ -80,13 +82,14 @@ namespace Test
             Console.WriteLine(set.Count);
             Console.WriteLine(set.Contains("xx2"));
 
+
             Console.WriteLine("共有缓存对象 {0} 个", ic.Count);
         }
 
         /// <summary>性能压测</summary>
         static void Test2()
         {
-            var ic = Redis.Create("127.0.0.1", 3);
+            var ic = new FullRedis("127.0.0.1", null, 3);
 
             // 性能压测
             //ic.AutoPipeline = -1;
@@ -104,27 +107,27 @@ namespace Test
 
         static void Test3()
         {
-            var ic = Redis.Create("127.0.0.1:6379", 3);
+            var _redis = new FullRedis("127.0.0.1:6379", null, 3);
             //ic.Log = XTrace.Log;
 
-            var list = ic.GetList<String>("kkk");
-            for (var i = 0; i < 100; i++)
-            {
-                list.Add(Rand.NextString(256));
-            }
-            ic.SetExpire("kkk", TimeSpan.FromSeconds(120));
+            var key = "ReliableQueue_unique";
 
-            var arr = list.ToArray();
-            Console.WriteLine(arr.Length);
-            foreach (var item in arr)
+            var hash = new HashSet<String>();
+
+            for (var i = 0; i < 1_000_000; i++)
             {
-                Console.WriteLine(item);
+                var q = _redis.GetReliableQueue<String>(key);
+
+                //Assert.DoesNotContain(q.AckKey, hash);
+                var rs = hash.Contains(q.AckKey);
+
+                hash.Add(q.AckKey);
             }
         }
 
         static void Test4()
         {
-            var rds = Redis.Create("127.0.0.1:6001", 0);
+            var rds = new FullRedis("127.0.0.1:6001", null, 0);
             rds.Log = XTrace.Log;
             //rds.Init(null);
 
@@ -154,7 +157,7 @@ namespace Test
         static void Test5()
         {
             var user = new User { Name = "NewLife", CreateTime = DateTime.Now };
-            var rds = Redis.Create("127.0.0.1", 2);
+            var rds = new FullRedis("127.0.0.1", null, 2);
             rds.Log = XTrace.Log;
             rds.Set("user", user, 3600);
             var user2 = rds.Get<User>("user");
@@ -184,7 +187,7 @@ eb2da2a40037265b9f21022d2c6e2ba00e91b67c 172.16.10.32:7000@17000 master - 0 1551
 
         static void TestHyperLogLog()
         {
-            var rds = Redis.Create("127.0.0.1", 1);
+            var rds = new FullRedis("127.0.0.1", null, 1);
 
             rds.Remove("ips");
             var log = new HyperLogLog(rds, "ips");
@@ -201,5 +204,100 @@ eb2da2a40037265b9f21022d2c6e2ba00e91b67c 172.16.10.32:7000@17000 master - 0 1551
             });
             XTrace.WriteLine("log.Count={0:n0}", log.Count);
         }
+
+        /// <summary>
+        /// 测试列表相关命令
+        /// LPUSH、RPUSH、BLPOP、RLPOP
+        /// </summary>
+        static void TestList()
+        {
+            //TODO 使用模型        
+            FullRedis fullRedis = new FullRedis("127.0.0.1:6379", "", 1);
+            fullRedis.Log = XTrace.Log;
+            #region 以对象方式读写
+            //LPUSH
+            fullRedis.LPUSH("vm", new VmModel[] { new VmModel() {
+            Id=Guid.NewGuid(),
+            Name="测试1"
+            },new VmModel (){
+            Id=Guid.NewGuid(),
+            Name="测试2"
+            } ,new VmModel (){
+            Id=Guid.NewGuid(),
+            Name="测试3"
+            }});
+
+            //RPUSH
+            fullRedis.RPUSH("vm", new VmModel[] { new VmModel() {
+            Id=Guid.NewGuid(),
+            Name="测试4"
+            },new VmModel (){
+            Id=Guid.NewGuid(),
+            Name="测试5"
+            } ,new VmModel (){
+            Id=Guid.NewGuid(),
+            Name="测试6"
+            }});
+
+            //BLPOP
+            fullRedis.Timeout = 20000;  //需要注意BLPOP、RLPOP在列表无元素时候会阻塞进程，超时时间不能超过FullRedis默认的Timeout时间
+            var vm = fullRedis.BLPOP<VmModel>("vm", 10);
+            if (vm != null)
+            {
+                Console.WriteLine($"BLPOP得到的vm名称:{vm.Name}");
+            }
+            //BRPOP
+            vm = fullRedis.BRPOP<VmModel>("vm", 10);
+            if (vm != null)
+            {
+                Console.WriteLine($"BRPOP得到的vm名称:{vm.Name}");
+            }
+            //RPOPLPUSH
+            vm = fullRedis.RPOPLPUSH<VmModel>("vm", "vmback");
+            Console.WriteLine($"RPOPLPUSH的结果值:{vm.Name}");
+
+            //BRPOPLPUSH
+            vm = fullRedis.BRPOPLPUSH<VmModel>("vm", "vmback1", 2);
+            Console.WriteLine($"BRPOPLPUSH的结果值:{vm.Name}");
+
+            #endregion
+
+            #region 以常规数据类型读写
+            //LPUSH
+            fullRedis.LPUSH("test", new int[] { 1, 2, 3 });
+            //RPUSH
+            fullRedis.RPUSH("test", new int[] { 4, 5, 6 });
+            //BLPOP
+            var testInt = fullRedis.BLPOP<int>("test", 10);
+            if (testInt > 0)
+            {
+                Console.WriteLine($"BLPOP得到的testInt:{testInt.ToString()}");
+            }
+            //BRPOP
+            testInt = fullRedis.BRPOP<int>("test", 10);
+            if (testInt > 0)
+            {
+                Console.WriteLine($"BRPOP得到的testInt:{testInt.ToString()}");
+            }
+            //RPOPLPUSH
+            var rpopTest = fullRedis.RPOPLPUSH<int>("test", "testback");
+            Console.WriteLine($"RPOPLPUSH的结果值:{rpopTest.ToString()}");
+
+            //BRPOPLPUSH
+            var brpopTest = fullRedis.BRPOPLPUSH<int>("test", "testback1", 2);
+            Console.WriteLine($"BRPOPLPUSH的结果值:{brpopTest.ToString()}");
+            #endregion
+
+        }
+
     }
+
+    public class VmModel
+    {
+        public Guid Id { get; set; }
+
+        public string Name { get; set; }
+    }
+
+
 }

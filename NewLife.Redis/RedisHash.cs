@@ -1,8 +1,9 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
+using NewLife.Caching.Models;
 using NewLife.Data;
+using NewLife.Reflection;
 
 namespace NewLife.Caching
 {
@@ -84,10 +85,10 @@ namespace NewLife.Caching
         /// <summary>迭代</summary>
         public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
         {
-            var count = Count;
-            if (count > 1000) throw new NotSupportedException($"[{Key}]的元素个数过多，不支持遍历！");
-
-            return GetAll().GetEnumerator();
+            foreach (var item in Search("*", 10000))
+            {
+                yield return item;
+            }
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -143,7 +144,7 @@ namespace NewLife.Caching
                 args.Add(item.Value);
             }
 
-            return Execute(r => r.Execute<Boolean>("HMSET", args.ToArray()), true);
+            return Execute(r => r.Execute<String>("HMSET", args.ToArray()) == "OK", true);
         }
 
         /// <summary>获取所有名值对</summary>
@@ -187,26 +188,39 @@ namespace NewLife.Caching
         public Int32 HStrLen(TKey field) => Execute(r => r.Execute<Int32>("HSTRLEN", Key, field));
 
         /// <summary>模糊搜索，支持?和*</summary>
-        /// <param name="pattern"></param>
-        /// <param name="count"></param>
-        /// <param name="position"></param>
+        /// <param name="model">搜索模型</param>
         /// <returns></returns>
-        public virtual String[] Search(String pattern, Int32 count, ref Int32 position)
+        public virtual IEnumerable<KeyValuePair<TKey, TValue>> Search(SearchModel model)
         {
-            var p = position;
-            var rs = Execute(r => r.Execute<Object[]>("HSCAN", Key, p, "MATCH", pattern + "", "COUNT", count));
-
-            if (rs != null)
+            var count = model.Count;
+            while (count > 0)
             {
-                position = (rs[0] as Packet).ToStr().ToInt();
+                var p = model.Position;
+                var rs = Execute(r => r.Execute<Object[]>("HSCAN", Key, p, "MATCH", model.Pattern + "", "COUNT", count));
+                if (rs == null || rs.Length != 2) break;
+
+                model.Position = (rs[0] as Packet).ToStr().ToInt();
 
                 var ps = rs[1] as Object[];
-                var ss = ps.Select(e => (e as Packet).ToStr()).ToArray();
-                return ss;
-            }
+                for (var i = 0; i < ps.Length - 1; i += 2)
+                {
+                    if (count-- > 0)
+                    {
+                        var key = (ps[i] as Packet).ToStr().ChangeType<TKey>();
+                        var val = (ps[i + 1] as Packet).ToStr().ChangeType<TValue>();
+                        yield return new KeyValuePair<TKey, TValue>(key, val);
+                    }
+                }
 
-            return null;
+                if (model.Position == 0) break;
+            }
         }
+
+        /// <summary>模糊搜索，支持?和*</summary>
+        /// <param name="pattern">匹配表达式</param>
+        /// <param name="count">返回个数</param>
+        /// <returns></returns>
+        public virtual IEnumerable<KeyValuePair<TKey, TValue>> Search(String pattern, Int32 count) => Search(new SearchModel { Pattern = pattern, Count = count });
         #endregion
     }
 }
